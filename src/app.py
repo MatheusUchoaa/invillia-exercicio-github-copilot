@@ -96,11 +96,20 @@ def get_activities():
 @app.get("/activities/{activity_name}")
 def get_activity(activity_name: str):
     """Retrieve details for a specific activity"""
-    # Validate activity exists
-    if activity_name not in activities:
-        raise HTTPException(status_code=404, detail="Activity not found")
+    # Normalizar o nome da atividade para comparação
+    normalized_name = activity_name.strip().lower()
 
-    return activities[activity_name]
+    # Validar se o nome da atividade contém apenas caracteres válidos
+    if not re.match(r'^[a-zA-Z0-9\s]+$', activity_name):
+        raise HTTPException(status_code=400, detail="Invalid activity name format")
+
+    # Procurar a atividade ignorando maiúsculas e minúsculas
+    activity = next((v for k, v in activities.items() if k.lower() == normalized_name), None)
+
+    if not activity:
+        raise HTTPException(status_code=404, detail=f"Activity '{activity_name}' not found")
+
+    return activity
 
 class SignupRequest(BaseModel):
     email: str
@@ -109,25 +118,26 @@ class SignupRequest(BaseModel):
 def signup_for_activity(activity_name: str, request: SignupRequest):
     """Sign up a student for an activity"""
     email = request.email
+    normalized_name = activity_name.strip().lower()
 
     # Validar formato do email
     email_regex = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$'
     if not re.match(email_regex, email):
         raise HTTPException(status_code=400, detail="Invalid email format")
 
-    # Validar se a atividade existe
-    if activity_name not in activities:
-        raise HTTPException(status_code=404, detail="Activity not found")
+    # Procurar a atividade ignorando maiúsculas e minúsculas
+    activity = next((v for k, v in activities.items() if k.lower() == normalized_name), None)
 
-    activity = activities[activity_name]
+    if not activity:
+        raise HTTPException(status_code=404, detail=f"Activity '{activity_name}' not found")
 
     # Verificar se o aluno já está inscrito
     if email in activity["participants"]:
-        raise HTTPException(status_code=400, detail="Student is already signed up for this activity")
+        raise HTTPException(status_code=400, detail=f"Student '{email}' is already signed up for this activity")
 
     # Verificar se a atividade já atingiu o limite de participantes
     if len(activity["participants"]) >= activity["max_participants"]:
-        raise HTTPException(status_code=400, detail="Activity is already full")
+        raise HTTPException(status_code=400, detail=f"Activity '{activity_name}' is already full")
 
     # Adicionar aluno
     activity["participants"].append(email)

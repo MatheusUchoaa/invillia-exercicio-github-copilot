@@ -10,6 +10,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 import os
 from pathlib import Path
+from pydantic import BaseModel
+import re
 
 app = FastAPI(title="Mergington High School API",
               description="API for viewing and signing up for extracurricular activities")
@@ -99,20 +101,34 @@ def get_activity(activity_name: str):
         raise HTTPException(status_code=404, detail="Activity not found")
 
     return activities[activity_name]
+
+class SignupRequest(BaseModel):
+    email: str
+
 @app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
+def signup_for_activity(activity_name: str, request: SignupRequest):
     """Sign up a student for an activity"""
-    # Validate activity exists
+    email = request.email
+
+    # Validar formato do email
+    email_regex = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$'
+    if not re.match(email_regex, email):
+        raise HTTPException(status_code=400, detail="Invalid email format")
+
+    # Validar se a atividade existe
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
 
-    # Get the specificy activity
     activity = activities[activity_name]
 
-    # Validar se o aluno já está inscrito
+    # Verificar se o aluno já está inscrito
     if email in activity["participants"]:
         raise HTTPException(status_code=400, detail="Student is already signed up for this activity")
 
-    # Add student
+    # Verificar se a atividade já atingiu o limite de participantes
+    if len(activity["participants"]) >= activity["max_participants"]:
+        raise HTTPException(status_code=400, detail="Activity is already full")
+
+    # Adicionar aluno
     activity["participants"].append(email)
     return {"message": f"Signed up {email} for {activity_name}"}

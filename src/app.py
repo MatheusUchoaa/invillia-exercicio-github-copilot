@@ -10,23 +10,16 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 import os
 from pathlib import Path
-from pydantic import BaseModel, EmailStr, constr
+from pydantic import BaseModel
 import re
-import logging
-
-# Configuração de logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Mergington High School API",
               description="API for viewing and signing up for extracurricular activities")
 
 # Mount the static files directory
 current_dir = Path(__file__).parent
-app.mount("/static", StaticFiles(directory=os.path.join(current_dir, "static")), name="static")
+app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
+          "static")), name="static")
 
 # In-memory activity database
 activities = {
@@ -99,83 +92,53 @@ def root():
 def get_activities():
     return activities
 
-def normalize_activity_name(name: str) -> str:
-    """Normaliza o nome da atividade removendo espaços extras e convertendo para lowercase"""
-    return " ".join(name.strip().split()).lower()
-
-def get_activity_by_name(activity_name: str) -> dict:
-    """Busca uma atividade pelo nome normalizado"""
-    normalized_name = normalize_activity_name(activity_name)
-    activity = next(
-        (v for k, v in activities.items() if normalize_activity_name(k) == normalized_name),
-        None
-    )
-    if not activity:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Activity '{activity_name}' not found"
-        )
-    return activity
 
 @app.get("/activities/{activity_name}")
 def get_activity(activity_name: str):
     """Retrieve details for a specific activity"""
+    # Normalizar o nome da atividade para comparação
+    normalized_name = activity_name.strip().lower()
+
+    # Validar se o nome da atividade contém apenas caracteres válidos
     if not re.match(r'^[a-zA-Z0-9\s]+$', activity_name):
-        raise HTTPException(
-            status_code=400,
-            detail="Activity name can only contain letters, numbers and spaces"
-        )
-    
-    try:
-        activity = get_activity_by_name(activity_name)
-        logger.info(f"Activity details retrieved for: {activity_name}")
-        return activity
-    except Exception as e:
-        logger.error(f"Error retrieving activity {activity_name}: {str(e)}")
-        raise
+        raise HTTPException(status_code=400, detail="Invalid activity name format")
+
+    # Procurar a atividade ignorando maiúsculas e minúsculas
+    activity = next((v for k, v in activities.items() if k.lower() == normalized_name), None)
+
+    if not activity:
+        raise HTTPException(status_code=404, detail=f"Activity '{activity_name}' not found")
+
+    return activity
 
 class SignupRequest(BaseModel):
-    email: EmailStr
-
-    @property
-    def is_valid_domain(self) -> bool:
-        return self.email.endswith("@mergington.edu")
+    email: str
 
 @app.post("/activities/{activity_name}/signup")
 def signup_for_activity(activity_name: str, request: SignupRequest):
     """Sign up a student for an activity"""
-    if not request.is_valid_domain:
-        raise HTTPException(
-            status_code=400,
-            detail="Only @mergington.edu email addresses are allowed"
-        )
+    email = request.email
+    normalized_name = activity_name.strip().lower()
 
-    try:
-        activity = get_activity_by_name(activity_name)
-        
-        if request.email in activity["participants"]:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Student '{request.email}' is already signed up for this activity"
-            )
+    # Validar formato do email
+    email_regex = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$'
+    if not re.match(email_regex, email):
+        raise HTTPException(status_code=400, detail="Invalid email format")
 
-        if len(activity["participants"]) >= activity["max_participants"]:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Activity '{activity_name}' is already full"
-            )
+    # Procurar a atividade ignorando maiúsculas e minúsculas
+    activity = next((v for k, v in activities.items() if k.lower() == normalized_name), None)
 
-        activity["participants"].append(request.email)
-        logger.info(f"Student {request.email} signed up for {activity_name}")
-        return {
-            "message": f"Successfully signed up {request.email} for {activity_name}",
-            "current_participants": len(activity["participants"])
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error during signup for {activity_name}: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail="An unexpected error occurred during signup"
-        )
+    if not activity:
+        raise HTTPException(status_code=404, detail=f"Activity '{activity_name}' not found")
+
+   # Validate student is not already signed up
+    if email in activity["participants"]:
+        raise HTTPException(status_code=400, detail=f"Student '{email}' is already signed up for this activity")
+
+    # Verificar se a atividade já atingiu o limite de participantes
+    if len(activity["participants"]) >= activity["max_participants"]:
+        raise HTTPException(status_code=400, detail=f"Activity '{activity_name}' is already full")
+
+    # Adicionar aluno
+    activity["participants"].append(email)
+    return {"message": f"Signed up {email} for {activity_name}"}
